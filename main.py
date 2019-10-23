@@ -32,7 +32,7 @@ def prepare_image(img_url: str, img_name: str, img_author: str, imgs_path: Path,
         print("Found WCS data at: " + str(wcs_file_path))
         fp = open(wcs_file_path)
         wcs_header = astropy.io.fits.header.Header()
-        wcs_header.fromtextfile(fp)
+        wcs_header = wcs_header.fromtextfile(fp)
         fp.close()
     else:
         print("Couldn't find WCS data at: " + str(wcs_file_path) + " - beginning Astrometry.net platesolving")
