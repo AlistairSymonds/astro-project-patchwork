@@ -5,44 +5,65 @@ import csv
 from pathlib import Path
 import urllib.request
 import urllib.parse
+import astropy.io.fits.header
 
 from astroquery.astrometry_net import AstrometryNet
 
 def prepare_image(img_url: str, img_name: str, img_author: str, imgs_path: Path, astrometry_net_key):
 
-    print("meme")
-    downloaded_file_path = imgs_path / urllib.parse.quote_plus(img_url)
+    img_file_name = urllib.parse.quote_plus(img_url)
+    print(img_file_name)
+    img_prep_folder = imgs_path / Path(urllib.parse.quote_plus(img_name) + "_"+ urllib.parse.quote_plus(img_author)+"_" +urllib.parse.quote_plus(img_url))
+    img_prep_folder.mkdir(exist_ok=True,parents=True)
+
+    downloaded_file_path = img_prep_folder / urllib.parse.quote_plus(img_url)
     if downloaded_file_path.exists():
         print("Already downloaded file from: " + img_url + " - skipping download!")
     else:
         print("Preparing image from: " + img_url + " and downloading to: " + str(downloaded_file_path))
         urllib.request.urlretrieve(img_url, downloaded_file_path)
 
-    ast = AstrometryNet()
-    ast.api_key = astrometry_net_key
 
-    try_again = True
-    submission_id = None
 
-    while try_again:
-        try:
-            if not submission_id:
-                wcs_header = ast.solve_from_image(str(downloaded_file_path),
-                                                  submission_id=submission_id,
-                                                  solve_timeout=600)
-            else:
-                wcs_header = ast.monitor_submission(submission_id,
-                                                    solve_timeout=600)
-        except TimeoutError as e:
-            submission_id = e.args[1]
-        else:
-            # got a result, so terminate
-            try_again = False
 
-    if wcs_header:
-        prepare_image(wcs_header)
+    wcs_file_name = str(downloaded_file_path.stem) + ".wcs"
+    wcs_file_path = img_prep_folder / wcs_file_name
+    if wcs_file_path.exists():
+        print("Found WCS data at: " + str(wcs_file_path))
+        fp = open(wcs_file_path)
+        wcs_header = astropy.io.fits.header.Header()
+        wcs_header.fromtextfile(fp)
+        fp.close()
     else:
-        print("Failed to solve :(")
+        print("Couldn't find WCS data at: " + str(wcs_file_path) + " - beginning Astrometry.net platesolving")
+        ast = AstrometryNet()
+        ast.api_key = astrometry_net_key
+
+        try_again = True
+        submission_id = None
+
+        while try_again:
+            try:
+                if not submission_id:
+                    wcs_header = ast.solve_from_image(str(downloaded_file_path),
+                                                      submission_id=submission_id,
+                                                      solve_timeout=600)
+                else:
+                    wcs_header = ast.monitor_submission(submission_id,
+                                                        solve_timeout=600)
+            except TimeoutError as e:
+                submission_id = e.args[1]
+            else:
+                # got a result, so terminate
+                try_again = False
+
+        fp = open(wcs_file_path, "wb")
+        wcs_header.totextfile(fp)
+        fp.close()
+
+
+
+
 
 
 
