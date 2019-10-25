@@ -179,13 +179,23 @@ def main():
 
     imgs = load_all_wcs_meta(img_dir_path)
 
+    smallest_scale = args.arc_sec_per_px
+    if smallest_scale is None:
+        smallest_scale = imgs[0]['scale']
+        for i in imgs:
+            if i['scale'] < smallest_scale:
+                smallest_scale = i['scale']
 
+    print("Using image scale of: " + str(smallest_scale) + " arc sec per pixel")
+
+
+    ## project and align
     base_file_path = imgs[0]['path']
     base_hdu = astropy.io.fits.open(base_file_path)[0]
     for patch_tuple in imgs[1:]:
         patch = astropy.io.fits.open(str(patch_tuple['path']))
         print(base_hdu.header)
-        wcs = WCS(base_hdu.header, naxis=2)
+        wcs = WCS(base_hdu.header, naxis=2) #this is the line that has issues
         print(wcs)
         array, footprint = reproject_interp(patch, base_hdu.header)
 
