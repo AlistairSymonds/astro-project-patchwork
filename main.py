@@ -9,7 +9,7 @@ import astropy.io.fits.header
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
-from reproject import reproject_interp
+from reproject import reproject_interp, reproject_exact
 from astropy.wcs import WCS
 
 from astroquery.astrometry_net import AstrometryNet
@@ -66,12 +66,16 @@ def prepare_image(img_url: str, img_name: str, img_author: str, imgs_path: Path,
     #combien into one fits file
 
     img_data = np.array(Image.open(downloaded_img_path))
-    img_data = np.rollaxis(img_data,2,0)
-    fits = astropy.io.fits.PrimaryHDU(data=img_data, header=wcs_header)
 
-    fits_path = downloaded_img_path.with_suffix(".fits")
-    print(fits)
-    fits.writeto(fits_path, overwrite=True)
+    channel_names = ['r','g','b']
+    for i in range(0, len(channel_names)):
+        channel_fits = astropy.io.fits.PrimaryHDU(data=img_data[:,:,i], header=wcs_header)
+
+        channel_fits_path_parent = downloaded_img_path.parent
+        channel_fits_path_filename = downloaded_img_path.stem
+        channel_fits_path = Path(str(channel_fits_path_parent / channel_fits_path_filename) +"_"+channel_names[i]+".fits")
+        print(channel_fits)
+        channel_fits.writeto(channel_fits_path, overwrite=True)
 
 
 
@@ -88,7 +92,13 @@ def load_all_wcs_meta(img_dir_path):
         wcs_h = astropy.io.fits.header.Header()
         wcs_h = wcs_h.fromtextfile(fp)
         wcs_headers.append(wcs_h)
-        img_paths.append(w.with_suffix(".fits"))
+
+        red_path = Path(str(w.parent / w.stem) + "_r.fits")
+        green_path = Path(str(w.parent / w.stem) + "_g.fits")
+        blue_path = Path(str(w.parent / w.stem) + "_b.fits")
+        img_channels = [red_path, green_path, blue_path]
+
+        img_paths.append(img_channels)
         fp.close()
 
 
@@ -190,33 +200,42 @@ def main():
 
 
     ## project and align
-    base_file_path = imgs[0]['path']
-    base_hdu = astropy.io.fits.open(base_file_path)[0]
-    for patch_tuple in imgs[1:]:
-        patch = astropy.io.fits.open(str(patch_tuple['path']))
-        print(base_hdu.header)
-        wcs = WCS(base_hdu.header, naxis=2) #this is the line that has issues
-        print(wcs)
-        array, footprint = reproject_interp(patch, base_hdu.header)
+    for c in range(0,3): #for RGB, once per channel
+        base_file_path = imgs[0]['path'][c]
+        base_hdu = astropy.io.fits.open(base_file_path)[0]
+        for patch_tuple in imgs[1:]:
+            curent_img_path = str(patch_tuple['path'][c])
+            print(curent_img_path)
+            patch = astropy.io.fits.open(curent_img_path)
+            patch.info()
+
+            print(base_hdu.header)
+            wcs = WCS(base_hdu.header) #this is the line that has issues
+            print(wcs)
+            patch[0].data = patch[0].data / 255
+
+            if np.isnan(patch[0].data).any():
+                print("Nan detected")
+            array, footprint = reproject_exact(patch[0], base_hdu.header)
 
 
-        ax1 = plt.subplot(1, 2, 1, projection=WCS(base_hdu.header, naxis=0))
-        ax1.imshow(array, origin='lower', vmin=-2.e-4, vmax=5.e-4)
-        ax1.coords.grid(color='white')
-        ax1.coords['ra'].set_axislabel('Right Ascension')
-        ax1.coords['dec'].set_axislabel('Declination')
-        ax1.set_title('Reprojected MSX band E image')
+            ax1 = plt.subplot(1, 2, 1, projection=WCS(base_hdu.header, naxis=0))
+            ax1.imshow(array, origin='lower', vmin=-2.e-4, vmax=5.e-4)
+            ax1.coords.grid(color='white')
+            ax1.coords['ra'].set_axislabel('Right Ascension')
+            ax1.coords['dec'].set_axislabel('Declination')
+            ax1.set_title('Reprojected MSX band E image')
 
-        ax2 = plt.subplot(1, 2, 2, projection=WCS(base_hdu.header))
-        ax2.imshow(footprint, origin='lower', vmin=0, vmax=1.5)
-        ax2.coords.grid(color='white')
-        ax1.coords['ra'].set_axislabel('Right Ascension')
-        ax1.coords['dec'].set_axislabel('Declination')
-        ax2.coords['dec'].set_axislabel_position('r')
-        ax2.coords['dec'].set_ticklabel_position('r')
-        ax2.set_title('MSX band E image footprint')
+            ax2 = plt.subplot(1, 2, 2, projection=WCS(base_hdu.header))
+            ax2.imshow(footprint, origin='lower', vmin=0, vmax=1.5)
+            ax2.coords.grid(color='white')
+            ax1.coords['ra'].set_axislabel('Right Ascension')
+            ax1.coords['dec'].set_axislabel('Declination')
+            ax2.coords['dec'].set_axislabel_position('r')
+            ax2.coords['dec'].set_ticklabel_position('r')
+            ax2.set_title('MSX band E image footprint')
 
-        plt.show()
+            plt.show()
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
