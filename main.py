@@ -49,7 +49,7 @@ def prepare_image(img_url: str, img_name: str, img_author: str, imgs_path: Path,
                 if not submission_id:
                     wcs_header = ast.solve_from_image(str(downloaded_img_path),
                                                       submission_id=submission_id,
-                                                      solve_timeout=600)
+                                                      solve_timeout=1200)
                 else:
                     wcs_header = ast.monitor_submission(submission_id,
                                                         solve_timeout=600)
@@ -216,7 +216,7 @@ def main():
 
             if np.isnan(patch[0].data).any():
                 print("Nan detected")
-            array, footprint = reproject_exact(patch[0], base_hdu.header)
+            array, footprint = reproject_interp(patch[0], base_hdu.header)
 
 
             ax1 = plt.subplot(1, 2, 1, projection=WCS(base_hdu.header, naxis=0))
@@ -239,4 +239,5 @@ def main():
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
+    Image.MAX_IMAGE_PIXELS = None #keep PIL happy when opening stupidly 3x drizzled files :P
     main()
