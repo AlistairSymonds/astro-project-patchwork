@@ -200,9 +200,11 @@ def main():
 
 
     ## project and align
+    final_image = []
     for c in range(0,3): #for RGB, once per channel
         base_file_path = imgs[0]['path'][c]
-        base_hdu = astropy.io.fits.open(base_file_path)[0]
+        base_hdu = astropy.io.fits.open(base_file_path)[0] #extract the primary hdu out of the HDU list
+        channel_canvas_array = base_hdu.data / 255
         for patch_tuple in imgs[1:]:
             curent_img_path = str(patch_tuple['path'][c])
             print(curent_img_path)
@@ -214,28 +216,24 @@ def main():
             print(wcs)
             patch[0].data = patch[0].data / 255
 
-            if np.isnan(patch[0].data).any():
-                print("Nan detected")
+
             array, footprint = reproject_interp(patch[0], base_hdu.header)
 
+            channel_canvas_array = channel_canvas_array + np.nan_to_num(array)
 
-            ax1 = plt.subplot(1, 2, 1, projection=WCS(base_hdu.header, naxis=0))
-            ax1.imshow(array, origin='lower', vmin=-2.e-4, vmax=5.e-4)
-            ax1.coords.grid(color='white')
-            ax1.coords['ra'].set_axislabel('Right Ascension')
-            ax1.coords['dec'].set_axislabel('Declination')
-            ax1.set_title('Reprojected MSX band E image')
-
-            ax2 = plt.subplot(1, 2, 2, projection=WCS(base_hdu.header))
-            ax2.imshow(footprint, origin='lower', vmin=0, vmax=1.5)
-            ax2.coords.grid(color='white')
-            ax1.coords['ra'].set_axislabel('Right Ascension')
-            ax1.coords['dec'].set_axislabel('Declination')
-            ax2.coords['dec'].set_axislabel_position('r')
-            ax2.coords['dec'].set_ticklabel_position('r')
-            ax2.set_title('MSX band E image footprint')
 
             plt.show()
+
+        final_image.append(channel_canvas_array)
+        #plt.imshow(channel_canvas_array)
+        #plt.show()
+
+    patch_werked = np.array(final_image)
+    patch_werked = np.moveaxis(patch_werked, 0, -1)
+
+    plt.imshow(patch_werked)
+    plt.imsave('final_image.png', patch_werked)
+    plt.show()
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
