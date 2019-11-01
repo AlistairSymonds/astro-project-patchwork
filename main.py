@@ -224,17 +224,9 @@ def main():
 
             array, footprint = reproject_interp(patch[0], base_hdu.header)
 
-            #channel_canvas_array = channel_canvas_array + np.nan_to_num(array)
-            height = channel_canvas_array.shape[0]
-            width  = channel_canvas_array.shape[1]
-            #TODO: benchmark this in row major vs column mjor ordering. Or just find a more pythonic way.
-            for i in range(0, height):
-                for j in range (0,width):
-                    if np.isnan(array[i,j]) == False:
-                        channel_canvas_array[i,j] = array[i,j]
+            channel_canvas_array = channel_canvas_array * (footprint-1)*-1
+            channel_canvas_array = channel_canvas_array + np.nan_to_num(array)
 
-
-            plt.show()
 
         final_image.append(channel_canvas_array)
         #plt.imshow(channel_canvas_array)
