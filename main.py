@@ -202,6 +202,11 @@ def main():
     ## project and align
     final_image = []
     for c in range(0,3): #for RGB, once per channel
+
+        print("#####")
+        print("Reprojecting channel:" + str(c))
+        print("#####")
+
         base_file_path = imgs[0]['path'][c]
         base_hdu = astropy.io.fits.open(base_file_path)[0] #extract the primary hdu out of the HDU list
         channel_canvas_array = base_hdu.data / 255
@@ -212,14 +217,21 @@ def main():
             patch.info()
 
             print(base_hdu.header)
-            wcs = WCS(base_hdu.header) #this is the line that has issues
+            wcs = WCS(base_hdu.header)
             print(wcs)
             patch[0].data = patch[0].data / 255
 
 
             array, footprint = reproject_interp(patch[0], base_hdu.header)
 
-            channel_canvas_array = channel_canvas_array + np.nan_to_num(array)
+            #channel_canvas_array = channel_canvas_array + np.nan_to_num(array)
+            height = channel_canvas_array.shape[0]
+            width  = channel_canvas_array.shape[1]
+            #TODO: benchmark this in row major vs column mjor ordering. Or just find a more pythonic way.
+            for i in range(0, height):
+                for j in range (0,width):
+                    if np.isnan(array[i,j]) == False:
+                        channel_canvas_array[i,j] = array[i,j]
 
 
             plt.show()
