@@ -9,10 +9,37 @@ import astropy.io.fits.header
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
-from reproject import reproject_interp, reproject_exact
+from reproject import reproject_exact, mosaicking, reproject_interp
 from astropy.wcs import WCS
+from astropy import units as u
 
 from astroquery.astrometry_net import AstrometryNet
+
+
+def calc_sky_area(header):
+
+    sky_area = None
+    comments = header['comment']
+    for c in comments:
+        if 'scale' in str(c) and 'Field' not in str(c):
+            print(c)
+
+            l = []
+            for t in str(c).split():
+                try:
+                    l.append(float(t))
+                except ValueError:
+                    pass
+            print(l)
+            if len(l) != 1:
+                assert AttributeError("Multiple numbers detected in scale")
+
+
+            sky_area = header['IMAGEH'] * header['IMAGEW'] * l[0]
+            print(sky_area)
+    return sky_area
+
+
 
 def prepare_image(img_url: str, img_name: str, img_author: str, imgs_path: Path, astrometry_net_key):
 
@@ -85,58 +112,26 @@ def prepare_image(img_url: str, img_name: str, img_author: str, imgs_path: Path,
 def load_all_wcs_meta(img_dir_path):
     wcs_glob = img_dir_path.glob("**/*.wcs")
 
-    img_paths = []
-    wcs_headers = []
+    #img_paths = []
+    #wcs_headers = []
+    data = []
     for w in wcs_glob:
+        img_dict = {}
         fp = open(w)
         wcs_h = astropy.io.fits.header.Header()
         wcs_h = wcs_h.fromtextfile(fp)
-        wcs_headers.append(wcs_h)
+        img_dict['wcs'] = wcs_h
 
         red_path = Path(str(w.parent / w.stem) + "_r.fits")
         green_path = Path(str(w.parent / w.stem) + "_g.fits")
         blue_path = Path(str(w.parent / w.stem) + "_b.fits")
         img_channels = [red_path, green_path, blue_path]
 
-        img_paths.append(img_channels)
+        img_dict['paths'] = (img_channels)
+        img_dict['area'] = calc_sky_area(wcs_h)
+        data.append(img_dict)
         fp.close()
-
-
-    #wcs_headers.sort(key=)
-    #find comment keyword
-
-    sky_areas = []
-    for idx, h  in enumerate(wcs_headers):
-        comments = h['comment']
-        for c in comments:
-            if 'scale' in str(c) and 'Field' not in str(c):
-                print(c)
-
-                l = []
-                for t in str(c).split():
-                    try:
-                        l.append(float(t))
-                    except ValueError:
-                        pass
-                print(l)
-                if len(l) != 1:
-                    assert AttributeError("Multiple numbers detected in scale")
-
-
-                sky_area = h['IMAGEH'] * h['IMAGEW'] * l[0]
-                print(sky_area)
-                patchwork_meta = {}
-                patchwork_meta['path'] = img_paths[idx]
-                patchwork_meta['sky_area'] = sky_area
-                patchwork_meta['scale'] = l[0]
-                sky_areas.append(patchwork_meta)
-
-
-    print(sky_areas)
-
-    sky_areas_sorted = sorted(sky_areas,key=lambda x: x['sky_area'], reverse=True)
-    print(sky_areas_sorted)
-    return sky_areas_sorted
+    return data
 
 
 
@@ -151,11 +146,13 @@ def main():
 
     args = ap.parse_args()
 
-    #check args
+    px_scale = None
+    if args.arc_sec_per_px is not None:
+        px_scale = float(args.arc_sec_per_px) * u.arcsec
 
     imgs_csv_path = Path(args.imgs_csv)
 
-
+    # check args
     img_dir_path = None
     if args.imgs_dir is not None:
         img_dir_path = Path(args.imgs_dir)
@@ -177,56 +174,53 @@ def main():
 
 
     prep_pool = ProcessPoolExecutor()
-    for row in csv_rows[1:]: #
+    for row in csv_rows[1:]:
         url = row[0]
         name = row[1]
         author = row[2]
-        #prep_pool.submit(prepare_image, url, name, author, img_dir_path, args.astronometry_net_api_key)
-        prepare_image(url, name, author, img_dir_path, args.astronometry_net_api_key)
+        prep_pool.submit(prepare_image, url, name, author, img_dir_path, args.astronometry_net_api_key)
 
     print("all images submitted for prep, waiting for all to be done...")
     prep_pool.shutdown()
 
-    imgs = load_all_wcs_meta(img_dir_path)
-
-    smallest_scale = args.arc_sec_per_px
-    if smallest_scale is None:
-        smallest_scale = imgs[0]['scale']
-        for i in imgs:
-            if i['scale'] < smallest_scale:
-                smallest_scale = i['scale']
-
-    print("Using image scale of: " + str(smallest_scale) + " arc sec per pixel")
+    all_data = load_all_wcs_meta(img_dir_path)
+    #sort based upon sky area,
+    all_data = sorted(all_data,key=lambda x: x['area'], reverse=True)
+    #open all the red fits and hope we have enough RAM I guess....
+    red_hdus = []
+    for img in all_data:
+        red_hdus.append(astropy.io.fits.open(img['paths'][0]))
+    final_wcs, final_shape = mosaicking.find_optimal_celestial_wcs(red_hdus, resolution=px_scale)
+    print(final_wcs.to_header())
+    print("Final pixel resolution will be: " + str(final_shape))
 
 
     ## project and align
-    final_image = []
-    for c in range(0,3): #for RGB, once per channel
+    final_image = [] #channels will be added to this array
+    channel_names = ['r', 'g', 'b']
+    for c in range(0, len(channel_names)): #for RGB, once per channel
 
         print("#####")
         print("Reprojecting channel:" + str(c))
         print("#####")
 
-        base_file_path = imgs[0]['path'][c]
-        base_hdu = astropy.io.fits.open(base_file_path)[0] #extract the primary hdu out of the HDU list
-        channel_canvas_array = base_hdu.data / 255
-        for patch_tuple in imgs[1:]:
-            curent_img_path = str(patch_tuple['path'][c])
+        channel_canvas_array = np.zeros(final_shape)
+        for img in all_data:
+            curent_img_path = str(img['paths'][c])
             print(curent_img_path)
             patch = astropy.io.fits.open(curent_img_path)
             patch.info()
 
-            print(base_hdu.header)
-            wcs = WCS(base_hdu.header)
-            print(wcs)
+
             patch[0].data = patch[0].data / 255
 
 
-            array, footprint = reproject_interp(patch[0], base_hdu.header)
+            array, footprint = reproject_interp(patch[0], final_wcs, shape_out=final_shape)
 
             channel_canvas_array = channel_canvas_array * (footprint-1)*-1
             channel_canvas_array = channel_canvas_array + np.nan_to_num(array)
-
+            #plt.imshow(channel_canvas_array)
+            #plt.show()
 
         final_image.append(channel_canvas_array)
         #plt.imshow(channel_canvas_array)
@@ -236,8 +230,9 @@ def main():
     patch_werked = np.moveaxis(patch_werked, 0, -1)
 
     plt.imshow(patch_werked)
-    plt.imsave('final_image.png', patch_werked)
     plt.show()
+    plt.imsave('final_image.png', np.clip(patch_werked, a_min=0, a_max=1))
+
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
