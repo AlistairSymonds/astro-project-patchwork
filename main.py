@@ -12,6 +12,7 @@ from PIL import Image
 from reproject import reproject_exact, mosaicking, reproject_interp, reproject_adaptive
 from astropy.wcs import WCS
 from astropy import units as u
+from timeit import default_timer as timer
 
 from astroquery.astrometry_net import AstrometryNet
 
@@ -145,6 +146,9 @@ def main():
                                              "values in all images will be used")
     ap.add_argument("--imgs_dir", help="Directory for images to be downloaded to and prepared in, defaults to the same name as CSV file used")
     ap.add_argument("--astronometry_net_api_key", "-ast_key")
+    ap.add_argument("--swap_dir", help="Directory memory mapped ararys will be saved during stacking. "
+                                       "A fast SSD with lots of space will increase speed, however having enough space is more important",
+                    default="patchwork_swap")
 
     args = ap.parse_args()
 
@@ -201,21 +205,29 @@ def main():
     final_wcs.to_header().totextfile(fp)
     fp.close()
     print("Final pixel resolution will be: " + str(final_shape))
-    final_image = np.memmap(filename="G:/Astrophotography/patchwork_scratch/final_patchwork.mmap",
+
+    swap_path = Path(args.swap_dir)
+
+    print("Saving intermediate files at: " + str(swap_path.absolute()))
+    swap_path.mkdir(exist_ok=True, parents=True)
+
+    final_image = np.memmap(filename=swap_path / "final_patchwork.mmap",
                                          shape=(final_shape[0],final_shape[1],3), mode='w+', dtype=np.float)
 
 
     ## project and align
     channel_names = ['r', 'g', 'b']
+    all_channel_start_time = timer()
     for c in range(0, len(channel_names)): #for RGB, once per channel
 
         print("#####")
         print("Reprojecting channel:" + str(c))
         print("#####")
-
-        channel_canvas_array = np.memmap(filename="G:/Astrophotography/patchwork_scratch/"+channel_names[c]+".mmap",
+        channel_start_time = timer()
+        channel_canvas_array = np.memmap(filename=swap_path / str(channel_names[c]+".mmap"),
                                          shape=final_shape, mode='w+', dtype=np.float)
         for img in all_data:
+            current_image_start_time = timer()
             curent_img_path = str(img['paths'][c])
             print(curent_img_path)
             patch = astropy.io.fits.open(curent_img_path)
@@ -227,15 +239,15 @@ def main():
             #plt.show()
 
 
-            mmapped_patch = np.memmap(filename="G:/Astrophotography/patchwork_scratch/current_patch.mmap",
+            mmapped_patch = np.memmap(filename=swap_path / "current_patch.mmap",
                               shape=patch[0].data.shape, mode='w+', dtype=np.float)
 
             mmapped_patch[:] = (patch[0].data.astype(np.float) / 255)[:]
 
             #this should probs be reproject_exact for the final
-            array = np.memmap(filename="G:/Astrophotography/patchwork_scratch/current_img.mmap",
+            array = np.memmap(filename=swap_path / "current_img.mmap",
                                          shape=final_shape, mode='w+', dtype=np.float)
-            footprint = np.memmap(filename="G:/Astrophotography/patchwork_scratch/current_footprint.mmap",
+            footprint = np.memmap(filename=swap_path / "current_footprint.mmap",
                                          shape=final_shape, mode='w+', dtype=np.float)
             reproject_interp((mmapped_patch,patch[0].header), final_wcs, shape_out=final_shape, output_array=array,return_footprint= False)
 
@@ -256,9 +268,11 @@ def main():
 
             #let go of all file handles so they can be overwitten for the next image
             del mmapped_patch, array, footprint
+            print("Reprojection for took: " + str(timer() - current_image_start_time)+"\n")
 
-        plt.imshow(channel_canvas_array)
-        plt.show()
+        print("Reprojection for " + channel_names[c] +"_channel took: "+ str(timer() - channel_start_time))
+        #plt.imshow(channel_canvas_array)
+        #plt.show()
         final_image[:,:,c] = channel_canvas_array[:,:]
 
     plt.imsave('final_image.png', np.clip(final_image, a_min=0, a_max=1))
