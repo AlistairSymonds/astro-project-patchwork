@@ -9,7 +9,7 @@ import astropy.io.fits.header
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
-from reproject import reproject_exact, mosaicking, reproject_interp
+from reproject import reproject_exact, mosaicking, reproject_interp, reproject_adaptive
 from astropy.wcs import WCS
 from astropy import units as u
 
@@ -93,6 +93,9 @@ def prepare_image(img_url: str, img_name: str, img_author: str, imgs_path: Path,
     #combien into one fits file
 
     img_data = np.array(Image.open(downloaded_img_path))
+    if img_data.ndim != 3:
+        img_data = np.stack((img_data,) * 3, axis=-1)
+
 
     channel_names = ['r','g','b']
     for i in range(0, len(channel_names)):
@@ -101,7 +104,6 @@ def prepare_image(img_url: str, img_name: str, img_author: str, imgs_path: Path,
         channel_fits_path_parent = downloaded_img_path.parent
         channel_fits_path_filename = downloaded_img_path.stem
         channel_fits_path = Path(str(channel_fits_path_parent / channel_fits_path_filename) +"_"+channel_names[i]+".fits")
-        print(channel_fits)
         channel_fits.writeto(channel_fits_path, overwrite=True)
 
 
@@ -178,7 +180,8 @@ def main():
         url = row[0]
         name = row[1]
         author = row[2]
-        prep_pool.submit(prepare_image, url, name, author, img_dir_path, args.astronometry_net_api_key)
+        #prep_pool.submit(prepare_image, url, name, author, img_dir_path, args.astronometry_net_api_key)
+        prepare_image(url, name, author, img_dir_path, args.astronometry_net_api_key)
 
     print("all images submitted for prep, waiting for all to be done...")
     prep_pool.shutdown()
@@ -190,13 +193,19 @@ def main():
     red_hdus = []
     for img in all_data:
         red_hdus.append(astropy.io.fits.open(img['paths'][0]))
-    final_wcs, final_shape = mosaicking.find_optimal_celestial_wcs(red_hdus, resolution=px_scale)
-    print(final_wcs.to_header())
+
+    #TODO: add a base coordinate frame to the center of the patchwork area
+    final_wcs, final_shape = mosaicking.find_optimal_celestial_wcs(red_hdus, resolution=px_scale,
+                                                                   auto_rotate=True, projection='MER')
+    fp = open('final.wcs', "wb")
+    final_wcs.to_header().totextfile(fp)
+    fp.close()
     print("Final pixel resolution will be: " + str(final_shape))
+    final_image = np.memmap(filename="G:/Astrophotography/patchwork_scratch/final_patchwork.mmap",
+                                         shape=(final_shape[0],final_shape[1],3), mode='w+', dtype=np.float)
 
 
     ## project and align
-    final_image = [] #channels will be added to this array
     channel_names = ['r', 'g', 'b']
     for c in range(0, len(channel_names)): #for RGB, once per channel
 
@@ -204,34 +213,60 @@ def main():
         print("Reprojecting channel:" + str(c))
         print("#####")
 
-        channel_canvas_array = np.zeros(final_shape)
+        channel_canvas_array = np.memmap(filename="G:/Astrophotography/patchwork_scratch/"+channel_names[c]+".mmap",
+                                         shape=final_shape, mode='w+', dtype=np.float)
         for img in all_data:
             curent_img_path = str(img['paths'][c])
             print(curent_img_path)
             patch = astropy.io.fits.open(curent_img_path)
             patch.info()
 
+            #plt.subplot(projection=final_wcs)
+            #plt.imshow(channel_canvas_array)
+            #plt.grid(color='white', ls='solid')
+            #plt.show()
 
-            patch[0].data = patch[0].data / 255
 
+            mmapped_patch = np.memmap(filename="G:/Astrophotography/patchwork_scratch/current_patch.mmap",
+                              shape=patch[0].data.shape, mode='w+', dtype=np.float)
 
-            array, footprint = reproject_interp(patch[0], final_wcs, shape_out=final_shape)
+            mmapped_patch[:] = (patch[0].data.astype(np.float) / 255)[:]
+
+            #this should probs be reproject_exact for the final
+            array = np.memmap(filename="G:/Astrophotography/patchwork_scratch/current_img.mmap",
+                                         shape=final_shape, mode='w+', dtype=np.float)
+            footprint = np.memmap(filename="G:/Astrophotography/patchwork_scratch/current_footprint.mmap",
+                                         shape=final_shape, mode='w+', dtype=np.float)
+            reproject_interp((mmapped_patch,patch[0].header), final_wcs, shape_out=final_shape, output_array=array,return_footprint= False)
+
+            #plt.subplot(projection=final_wcs)
+            #plt.imshow(array)
+            #plt.grid(color='white', ls='solid')
+            #plt.show()
+
+            footprint[:] = (~np.isnan(array))[:]
 
             channel_canvas_array = channel_canvas_array * (footprint-1)*-1
             channel_canvas_array = channel_canvas_array + np.nan_to_num(array)
+
+            #plt.subplot(projection=final_wcs)
             #plt.imshow(channel_canvas_array)
+            #plt.grid(color='white', ls='solid')
             #plt.show()
 
-        final_image.append(channel_canvas_array)
-        #plt.imshow(channel_canvas_array)
-        #plt.show()
+            #let go of all file handles so they can be overwitten for the next image
+            del mmapped_patch, array, footprint
 
-    patch_werked = np.array(final_image)
-    patch_werked = np.moveaxis(patch_werked, 0, -1)
+        plt.imshow(channel_canvas_array)
+        plt.show()
+        final_image[:,:,c] = channel_canvas_array[:,:]
 
-    plt.imshow(patch_werked)
+    plt.imsave('final_image.png', np.clip(final_image, a_min=0, a_max=1))
+    plt.subplot(projection=final_wcs)
+    plt.imshow(final_image)
+    plt.grid(color='white', ls='dotted')
     plt.show()
-    plt.imsave('final_image.png', np.clip(patch_werked, a_min=0, a_max=1))
+
 
 
 if __name__ == "__main__":

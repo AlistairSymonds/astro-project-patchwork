@@ -4,10 +4,11 @@ requires a python environment with:
 * astroquery
 * astropy
 * reproject
+* shapely
 
 Example conda environment:
     
-    conda create -n astro -c astropy astropy astroquery reproject matplotlib
+    conda create -n astro -c astropy astropy astroquery reproject shapely matplotlib
 
 
 Example usage using my Horsehead and Orion images
