@@ -115,7 +115,7 @@ def load_all_wcs_meta(img_dir_path):
 
         img_dict['paths'] = (img_channels)
 
-        img_dict['area'] = calc_sky_area(wutils.proj_plane_pixel_area(WCS(wcs_h)) * wcs_h['IMAGEH'] * wcs_h['IMAGEW'])
+        img_dict['area'] = calc_sky_area(wcs_h)
         data.append(img_dict)
         fp.close()
     return data
@@ -241,7 +241,7 @@ def main():
             footprint = np.memmap(filename=swap_path / "current_footprint.mmap",
                                          shape=final_shape, mode='w+', dtype=np.float)
 
-            method = "blocked"
+            method = "none"
             if method == "interp":
                 reproject_interp((mmapped_patch,patch[0].header), final_wcs, shape_out=final_shape, output_array=array,return_footprint= False)
                 footprint[:] = (~np.isnan(array))[:]
@@ -256,8 +256,9 @@ def main():
             elif method == 'blocked':
                 reproject_blocked(reproject_interp, input_data=(mmapped_patch,patch[0].header), shape_out=final_shape,
                                   output_projection=final_wcs,
-                                  output_array=array,output_footprint=footprint, return_footprint=True, parallel=False)
+                                  output_array=array,output_footprint=footprint, return_footprint=True, parallel=True, block_size=(3000,3000))
 
+            print("Reprojection took: " + str(timer() - current_image_start_time) + "\n")
 
             #plt.subplot(projection=final_wcs)
             #plt.imshow(array)
@@ -272,7 +273,7 @@ def main():
             channel_canvas_array *= footprint
             print("cleared")
             # channel_canvas_array[:] = channel_canvas_array * (footprint-1)*-1
-            array[:] = np.nan_to_num(array)
+            np.nan_to_num(array, copy=False)
             print("de-NAN'd")
             channel_canvas_array += array
             print("inserted")
@@ -284,11 +285,11 @@ def main():
 
             #let go of all file handles so they can be overwitten for the next image
             del mmapped_patch, array, footprint
-            print("Reprojection took: " + str(timer() - current_image_start_time)+"\n")
+            print("Reprojection and insertion took: " + str(timer() - current_image_start_time) + "\n")
 
         print("Reprojection for " + channel_names[c] +"_channel took: "+ str(timer() - channel_start_time))
-        plt.imshow(channel_canvas_array)
-        plt.show()
+        #plt.imshow(channel_canvas_array)
+        #plt.show()
         final_image[:,:,c] = channel_canvas_array[:,:]
         del channel_canvas_array
 
