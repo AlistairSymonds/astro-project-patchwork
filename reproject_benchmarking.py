@@ -8,9 +8,9 @@ import multiprocessing
 import json
 
 def main():
-    processes = [False,1,2,4]
-    reproj_funcs = [reproject_interp] #, reproject_adaptive, reproject_exact]
-    block_sizes = [500, 750, 1000]
+    processes = [False,1,2,4, True]
+    reproj_funcs = [reproject_interp, reproject_adaptive] #, reproject_exact]
+    block_sizes = [500, 1000, 2500]
     results = []
 
     mra=180.0
@@ -19,7 +19,7 @@ def main():
     ctype=('RA---SIN','DEC--SIN')
 
     # pick sizes here
-    rxsize=rysize=3000
+    rxsize=rysize=5000
     xsize=ysize=1024
 
     rwcs=WCS(naxis=2)
