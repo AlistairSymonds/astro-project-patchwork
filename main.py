@@ -10,7 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 from reproject import reproject_exact, mosaicking, reproject_interp, reproject_adaptive
-from reproject.utils import reproject_blocked
+#from reproject.utils import reproject_blocked
 from astropy.wcs import WCS
 from astropy.wcs import utils as wutils
 from astropy import units as u
@@ -159,7 +159,7 @@ def main():
         csvreader = csv.reader(csvfile, delimiter=',', quotechar='|')
         for row in csvreader:
             print(row)
-            if (row[0][0] is not '#' ):
+            if (row[0][0] != '#' ):
                 csv_rows.append(row)
 
 
@@ -189,7 +189,6 @@ def main():
         red_hdus.append(astropy.io.fits.open(img['paths'][0]))
 
     #TODO: add a base coordinate frame to the center of the patchwork area
-    center_coord = coordinates.SkyCoord(ra='3h49m9.77s',dec='+24d') #approx location of Atlas in M45
     final_wcs, final_shape = mosaicking.find_optimal_celestial_wcs(red_hdus, resolution=px_scale,
                                                                    auto_rotate=False, projection='MER')
     fp = open('final.wcs', "wb")
@@ -241,10 +240,10 @@ def main():
             footprint = np.memmap(filename=swap_path / "current_footprint.mmap",
                                          shape=final_shape, mode='w+', dtype=np.float)
 
-            method = "none"
+            method = "interp"
             if method == "interp":
-                reproject_interp((mmapped_patch,patch[0].header), final_wcs, shape_out=final_shape, output_array=array,return_footprint= False)
-                footprint[:] = (~np.isnan(array))[:]
+                reproject_interp((mmapped_patch,patch[0].header), final_wcs, shape_out=final_shape, output_array=array, return_footprint = True, output_footprint=footprint,
+                                 block_size=(700,700), parallel=True)
                 print("footprint created")
                 # now we need to do this without allocating any new arrays
                 # channel_canvas_array[:] = channel_canvas_array * (footprint-1)*-1
@@ -256,32 +255,32 @@ def main():
             elif method == 'blocked':
                 reproject_blocked(reproject_interp, input_data=(mmapped_patch,patch[0].header), shape_out=final_shape,
                                   output_projection=final_wcs,
-                                  output_array=array,output_footprint=footprint, return_footprint=True, parallel=True, block_size=(3000,3000))
+                                  output_array=array,output_footprint=footprint, return_footprint=True, parallel=True, block_size=(700,700))
 
             print("Reprojection took: " + str(timer() - current_image_start_time) + "\n")
 
-            #plt.subplot(projection=final_wcs)
-            #plt.imshow(array)
-            #plt.grid(color='white', ls='solid')
-            #plt.show()
 
-            footprint -= 1
-            print('subtracted')
-            footprint *= -1
-            print("multiplied")
+           
+            #footprint -= 1
+            #print('subtracted')
+#
+#
+            #footprint *= -1
+            #print("multiplied")
+#
+#
+#
+            #channel_canvas_array *= footprint
+            #print("cleared")
 
-            channel_canvas_array *= footprint
-            print("cleared")
-            # channel_canvas_array[:] = channel_canvas_array * (footprint-1)*-1
+
+            channel_canvas_array[:] = channel_canvas_array * (footprint-1)*-1
             np.nan_to_num(array, copy=False)
             print("de-NAN'd")
+ 
             channel_canvas_array += array
             print("inserted")
 
-            #plt.subplot(projection=final_wcs)
-            #plt.imshow(footprint)
-            #plt.grid(color='white', ls='solid')
-            #plt.show()
 
             #let go of all file handles so they can be overwitten for the next image
             del mmapped_patch, array, footprint
